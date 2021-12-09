@@ -10,13 +10,16 @@ import torch
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torch.utils.data as data
+from torch.cuda import amp
 from torch.utils.tensorboard import SummaryWriter
+from torchvision import transforms
+from torchvision.ops import nms
 import cv2
 import numpy as np
 
 from layers.modules import MultiBoxLoss
 from layers.functions.prior_box import PriorBox
-from data import WiderFaceDetection, detection_collate, preproc, cfg
+from data import WiderFaceDataset, detection_collate, preproc, cfg
 from swinFace import SwinFace
 from utils.nms.py_cpu_nms import py_cpu_nms
 from utils.timer import Timer
@@ -24,12 +27,13 @@ from utils.box_utils import decode, decode_landm
 import metrics
 
 parser = argparse.ArgumentParser(description='Retinaface Training')
-parser.add_argument('--training_dataset', default='./data/widerface/train/label.txt', help='Training dataset directory')
+parser.add_argument('--training_dataset', default='./data/widerface/train/', help='Training dataset directory')
+parser.add_argument('--evaling_dataset', default='./data/widerface/val/', help='Evaling dataset directory')
 parser.add_argument('--num_workers', default=4, type=int, help='Number of workers used in dataloading')
 parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
-parser.add_argument('--resume_net', default='./result/20211221828/weights/swin_epoch_30.pth', help='resume net for retraining')
-parser.add_argument('--resume_epoch', default=30, type=int, help='resume iter for retraining')
+parser.add_argument('--resume_net', default=None, help='resume net for retraining')
+parser.add_argument('--resume_epoch', default=0, type=int, help='resume iter for retraining')
 parser.add_argument('--weight_decay', default=5e-4, type=float, help='Weight decay for SGD')
 parser.add_argument('--gamma', default=0.1, type=float, help='Gamma update for SGD')
 parser.add_argument('--save_folder', default='./result/', help='Location to save checkpoint models')
@@ -53,6 +57,7 @@ weight_decay = args.weight_decay
 initial_lr = args.lr
 gamma = args.gamma
 training_dataset = args.training_dataset
+evaling_dataset = args.evaling_dataset
 save_folder = args.save_folder
 
 # config log =============================================================
@@ -87,7 +92,7 @@ model = SwinFace()
 logger.debug("Printing net...")
 logger.debug(model)
 
-# load resume weight =====================================================
+# Resume =================================================================
 if args.resume_net is not None:
     logger.debug('Loading resume network...')
     state_dict = torch.load(args.resume_net)
@@ -110,8 +115,7 @@ if num_gpu > 1 and gpu_train:
 else:
     model = model.cuda()
 
-
-cudnn.benchmark = True
+cudnn.benchmark = False
 
 optimizer = optim.SGD(model.parameters(), lr=initial_lr,
                       momentum=momentum, weight_decay=weight_decay)
@@ -122,24 +126,40 @@ with torch.no_grad():
     priors = priorbox.forward()
     priors = priors.cuda()
 
-# =============== prepare eval dataset ================================
-eval_dataset_dir = './data/widerface/val'
-eval_dataset_list_file = Path(eval_dataset_dir) / 'wider_val.txt'
-with eval_dataset_list_file.open() as f:
-    eval_dataset = f.read().split()
-eval_dataset = [(Path(eval_dataset_dir) / 'images' / filename.strip('/')).__str__() for filename in eval_dataset]
+
+def eval_transform(img: np.ndarray, targ):
+    img_h, img_w = img.shape[:2]
+
+    img = cv2.resize(img, (img_dim, img_dim))
+    img = img.transpose(2, 0, 1)
+
+    bbox = targ[:4]
+    landms = targ[4:-1]
+    label = targ[-1]
+
+    bbox[0::2] /= img_w
+    bbox[1::2] /= img_h
+    landms[0::2] /= img_w
+    landms[1::2] /= img_h
+
+    return img, targ
+
 
 device = 'cuda'
 
-
-# =======================================================================
-
-
+grad_accu_step = 8
 def train():
     logger.debug('Loading Dataset...')
-    train_dataset = WiderFaceDetection(training_dataset, preproc(img_dim, rgb_mean))
+    train_dataset = WiderFaceDataset(training_dataset, preproc(img_dim, rgb_mean))
     train_dataloader = data.DataLoader(train_dataset, batch_size, shuffle=True, num_workers=num_workers,
                                        collate_fn=detection_collate)
+
+    # =============== prepare eval dataset ================================
+
+    eval_dataset = WiderFaceDataset(evaling_dataset, preproc=eval_transform, dataset_type='eval')
+    eval_dataloader = data.DataLoader(eval_dataset, batch_size, shuffle=False, num_workers=num_workers,
+                                      collate_fn=detection_collate)
+    # =======================================================================
 
     epoch_begin = 0 + args.resume_epoch
     epoch_size = math.ceil(len(train_dataset) / batch_size)
@@ -151,6 +171,7 @@ def train():
     stepvalues = (cfg['decay1'] * epoch_size, cfg['decay2'] * epoch_size)
     step_index = 0
 
+    scaler = amp.GradScaler()
     # train ==================================================================================================
     for epoch in range(epoch_begin, max_epoch):
         for i, (images, targets) in enumerate(train_dataloader):
@@ -169,15 +190,21 @@ def train():
             images, targets = images.to(device), [anno.to(device) for anno in targets]
 
             # forward
-            out = model(images)
-
+            with amp.autocast():
+                out = model(images)
+                loss_l, loss_c, loss_landm = criterion(out, priors, targets)
+                loss = cfg['loc_weight'] * loss_l + loss_c + loss_landm
+        
             # backprop
-            optimizer.zero_grad()
-            loss_l, loss_c, loss_landm = criterion(out, priors, targets)
-            loss = cfg['loc_weight'] * loss_l + loss_c + loss_landm
-            loss.backward()
-            optimizer.step()
-
+            
+            # loss.backward()
+            scaler.scale(loss/grad_accu_step).backward()
+            # optimizer.step()
+            if iter_num % grad_accu_step == 0:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+                
             t1 = time.time()
             # log
             batch_time = t1 - t0
@@ -204,9 +231,8 @@ def train():
 
             if (epoch + 1) % 5 == 0 or ((epoch + 1) % 5 == 0 and (epoch + 1) > cfg['decay1']):
                 # eval =====================================================================
-                # model.eval()
                 # info = evaluate(model, eval_dataset, device)
-                # logger.debug('eval')
+                # logger.debug(f'eval: {info}')
                 # ==========================================================================
                 save_path = Path(save_folder).joinpath('weights', f'swin_epoch_{epoch + 1}.pth')
                 save_path.parent.mkdir(exist_ok=True)
@@ -221,80 +247,64 @@ def train():
 
 
 @torch.no_grad()
-def evaluate(model, eval_dataset, device):
+def eval(model, eval_dataset, device):
+    model.eval()
     model = model.to(device)
+    for i, (images, targets) in enumerate(eval_dataset):
+        img_h, img_w = images[0].size()[2:4]
+        scale = torch.Tensor([img_w, img_h, img_w, img_h])
+        images[:, 0, :, :] -= rgb_mean[0]
+        images[:, 1, :, :] -= rgb_mean[1]
+        images[:, 2, :, :] -= rgb_mean[2]
 
-    origin_size = True
-    confidence_threshold = 0.02
-    nms_threshold = 0.4
-    for i, image_path in enumerate(eval_dataset):
-        img = cv2.imread(image_path)
-        img = np.float32(img)
-
-        target_size = 1600
-        max_size = 2150
-        im_shape = img.shape
-        im_size_min = np.min(im_shape[0:2])
-        im_size_max = np.max(im_shape[0:2])
-        resize = float(target_size) / float(im_size_min)
-        # prevent bigger axis from being more than max_size:
-        if np.round(resize * im_size_max) > max_size:
-            resize = float(max_size) / float(im_size_max)
-        if origin_size:
-            resize = 1
-
-        if resize != 1:
-            img = cv2.resize(img, None, None, fx=resize, fy=resize, interpolation=cv2.INTER_LINEAR)
-        im_height, im_width, _ = img.shape
-        scale = torch.Tensor([img.shape[1], img.shape[0], img.shape[1], img.shape[0]])
-        img -= (104, 117, 123)
-        img = img.transpose(2, 0, 1)
-        img = torch.from_numpy(img).unsqueeze(0)
-        img = img.to(device)
+        images = images.to(device)
         scale = scale.to(device)
 
-        loc, conf, landms = model(img)  # forward pass
-        priorbox = PriorBox(cfg, image_size=(im_height, im_width))
+        locs, confs, _ = model(images)  # forward pass
+
+        priorbox = PriorBox(cfg, image_size=(img_h, img_w))
         priors = priorbox.forward()
         priors = priors.to(device)
         prior_data = priors.data
-        boxes = decode(loc.data.squeeze(0), prior_data, cfg['variance'])
-        boxes = boxes * scale / resize
-        boxes = boxes.cpu().numpy()
-        scores = conf.squeeze(0).data.cpu().numpy()[:, 1]
-        landms = decode_landm(landms.data.squeeze(0), prior_data, cfg['variance'])
-        scale1 = torch.Tensor([img.shape[3], img.shape[2], img.shape[3], img.shape[2],
-                               img.shape[3], img.shape[2], img.shape[3], img.shape[2],
-                               img.shape[3], img.shape[2]])
-        scale1 = scale1.to(device)
-        landms = landms * scale1 / resize
-        landms = landms.cpu().numpy()
 
-        # ignore low scores
-        inds = np.where(scores > confidence_threshold)[0]
-        boxes = boxes[inds]
-        landms = landms[inds]
-        scores = scores[inds]
+        preds = []
+        for loc, conf in zip(locs, confs):
+            boxes = decode(loc.data.squeeze(0), prior_data, cfg['variance'])
+            boxes = boxes * scale
+            boxes = boxes.cpu().numpy()
+            scores = conf.squeeze(0).data.cpu().numpy()[:, 1]
+            landms = decode_landm(landms.data.squeeze(0), prior_data, cfg['variance'])
+            scale1 = torch.Tensor([img_w, img_h] * 5)
+            scale1 = scale1.to(device)
+            landms = landms * scale1
+            landms = landms.cpu().numpy()
 
-        # keep top-K before NMS
-        order = scores.argsort()[::-1]
-        # order = scores.argsort()[::-1][:args.top_k]
-        boxes = boxes[order]
-        landms = landms[order]
-        scores = scores[order]
+            # ignore low scores
+            inds = np.where(scores > args.confidence_threshold)[0]
+            boxes = boxes[inds]
+            landms = landms[inds]
+            scores = scores[inds]
 
-        # do NMS
-        dets = np.hstack((boxes, scores[:, np.newaxis])).astype(np.float32, copy=False)
-        keep = py_cpu_nms(dets, nms_threshold)
-        # keep = nms(dets, args.nms_threshold,force_cpu=args.cpu)
-        dets = dets[keep, :]
-        landms = landms[keep]
+            # keep top-K before NMS
+            order = scores.argsort()[::-1][:args.top_k]
+            boxes = boxes[order]
+            landms = landms[order]
+            scores = scores[order]
 
-        # keep top-K faster NMS
-        # dets = dets[:args.keep_top_k, :]
-        # landms = landms[:args.keep_top_k, :]
+            # do NMS
+            dets = np.hstack((boxes, scores[:, np.newaxis])).astype(np.float32, copy=False)
+            keep = py_cpu_nms(dets, args.nms_threshold)
+            # keep = nms(dets, args.nms_threshold,force_cpu=args.cpu)
+            dets = dets[keep, :]
+            landms = landms[keep]
 
-        dets = np.concatenate((dets, landms), axis=1)
+            # keep top-K faster NMS
+            dets = dets[:args.keep_top_k, :]
+            landms = landms[:args.keep_top_k, :]
+
+            dets = np.concatenate((dets, landms), axis=1)
+
+            preds.append(dets)
 
 
 def adjust_learning_rate(optimizer, gamma, epoch, step_index, iteration, epoch_size):
@@ -315,3 +325,6 @@ def adjust_learning_rate(optimizer, gamma, epoch, step_index, iteration, epoch_s
 if __name__ == '__main__':
     train()
     # evaluate(model, eval_dataset, device)
+
+    # model = SwinFace()
+    # model.load_state_dict(torch.load('./result/2021124125/weights/swin_epoch_35.pth'))

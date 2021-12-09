@@ -6,7 +6,7 @@ cfg = {
     'clip': False,
     'loc_weight': 2.0,
     'gpu_train': True,
-    'batch_size': 4,
+    'batch_size': 8,
     'ngpu': 1,
     'epoch': 250,
     'decay1': 190,

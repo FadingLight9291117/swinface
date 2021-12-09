@@ -111,6 +111,6 @@ class SwinFace(nn.Module):
 
 if __name__ == '__main__':
     model = SwinFace().cuda()
-    x = torch.ones(1, 3, 640, 640).cuda()
+    x = torch.ones(1, 3, 1640, 640).cuda()
     y = model(x)
     print([i.size() for i in y])
