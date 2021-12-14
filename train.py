@@ -67,7 +67,7 @@ Path(save_folder).mkdir(exist_ok=True)
 log_path = f'{save_folder}/train.log'
 
 # tensorboard config =========================================================
-tb_writer = SummaryWriter(Path(save_folder).joinpath('log'.__str__()))
+tb_writer = SummaryWriter(Path(save_folder).joinpath('log'))
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)

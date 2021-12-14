@@ -14,7 +14,7 @@ from utils.timer import Timer
 
 
 parser = argparse.ArgumentParser(description='Retinaface')
-parser.add_argument('-m', '--trained_model', default='./result/2021124125/weights/swin_epoch_60.pth',
+parser.add_argument('-m', '--trained_model', default='./result/swin_epoch_195.pth',
                     type=str, help='Trained state_dict file path to open')
 parser.add_argument('--origin_size', default=True, type=str, help='Whether use origin image size to evaluate')
 parser.add_argument('--save_folder', default='./widerface_evaluate/widerface_txt/', type=str, help='Dir to save txt results')
