@@ -1,6 +1,6 @@
 #!/bin/bash
 
-weight_dir='/home/clz/model/swinface/weights/'
+weight_dir='/home/clz/model/swinface/eval_weights/'
 
 for i in $weight_dir/*
 do
