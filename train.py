@@ -27,8 +27,8 @@ from utils.box_utils import decode, decode_landm
 import metrics
 
 parser = argparse.ArgumentParser(description='Retinaface Training')
-parser.add_argument('--training_dataset', default='./data/widerface/train/', help='Training dataset directory')
-parser.add_argument('--evaling_dataset', default='./data/widerface/val/', help='Evaling dataset directory')
+parser.add_argument('--trainset_path', default='./data/widerface/train/', help='Training dataset directory')
+parser.add_argument('--valset_path', default='./data/widerface/val/', help='Evaling dataset directory')
 parser.add_argument('--num_workers', default=4, type=int, help='Number of workers used in dataloading')
 parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
@@ -36,12 +36,10 @@ parser.add_argument('--resume_net', default=None, help='resume net for retrainin
 parser.add_argument('--resume_epoch', default=0, type=int, help='resume iter for retraining')
 parser.add_argument('--weight_decay', default=5e-4, type=float, help='Weight decay for SGD')
 parser.add_argument('--gamma', default=0.1, type=float, help='Gamma update for SGD')
-parser.add_argument('--save_folder', default='./result/', help='Location to save checkpoint models')
+parser.add_argument('--project', default='./runs/train', help='Location to save checkpoint models')
+parser.add_argument('--name', default='exp', help='save to project/name')
 
 args = parser.parse_args()
-
-if not os.path.exists(args.save_folder):
-    os.mkdir(args.save_folder)
 
 rgb_mean = (104, 117, 123)  # bgr order
 num_classes = 2
@@ -56,19 +54,26 @@ momentum = args.momentum
 weight_decay = args.weight_decay
 initial_lr = args.lr
 gamma = args.gamma
-training_dataset = args.training_dataset
-evaling_dataset = args.evaling_dataset
-save_folder = args.save_folder
+trainset_path = args.trainset_path
+valset_path = args.valset_path
+project = args.project
+name = args.name
+
+# config save_dir========================================================
+Path(project).mkdir(exist_ok=True, parents=True)
+save_dir = str(Path(project) / name)
+i = 1
+while os.path.exists(save_dir):
+    i += 1
+    save_dir = str(Path(project) / (name + f'{i}'))
+Path(save_dir).mkdir()
+# ======================================================================
+
+# tensorboard log
+tb_writer = SummaryWriter(str(Path(save_dir) / 'log'))
 
 # config log =============================================================
-now = datetime.datetime.now()
-save_folder = str(Path(save_folder) / f'{now.year}{now.month}{now.day}{now.hour}{now.minute}')
-Path(save_folder).mkdir(exist_ok=True)
-log_path = f'{save_folder}/train.log'
-
-# tensorboard config =========================================================
-tb_writer = SummaryWriter(Path(save_folder).joinpath('log'))
-
+log_path = f'{save_dir}/train.log'
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter(
@@ -129,14 +134,11 @@ with torch.no_grad():
 
 def eval_transform(img: np.ndarray, targ):
     img_h, img_w = img.shape[:2]
-
     img = cv2.resize(img, (img_dim, img_dim))
     img = img.transpose(2, 0, 1)
-
     bbox = targ[:4]
     landms = targ[4:-1]
     label = targ[-1]
-
     bbox[0::2] /= img_w
     bbox[1::2] /= img_h
     landms[0::2] /= img_w
@@ -146,18 +148,19 @@ def eval_transform(img: np.ndarray, targ):
 
 
 device = 'cuda'
-
 grad_accu_step = 8
+
+
 def train():
     logger.debug('Loading Dataset...')
-    train_dataset = WiderFaceDataset(training_dataset, preproc(img_dim, rgb_mean))
+    train_dataset = WiderFaceDataset(trainset_path, preproc(img_dim, rgb_mean))
     train_dataloader = data.DataLoader(train_dataset, batch_size, shuffle=True, num_workers=num_workers,
                                        collate_fn=detection_collate)
 
     # =============== prepare eval dataset ================================
 
-    eval_dataset = WiderFaceDataset(evaling_dataset, preproc=eval_transform, dataset_type='eval')
-    eval_dataloader = data.DataLoader(eval_dataset, batch_size, shuffle=False, num_workers=num_workers,
+    val_dataset = WiderFaceDataset(valset_path, preproc=eval_transform, dataset_type='eval')
+    eval_dataloader = data.DataLoader(val_dataset, batch_size, shuffle=False, num_workers=num_workers,
                                       collate_fn=detection_collate)
     # =======================================================================
 
@@ -194,17 +197,16 @@ def train():
                 out = model(images)
                 loss_l, loss_c, loss_landm = criterion(out, priors, targets)
                 loss = cfg['loc_weight'] * loss_l + loss_c + loss_landm
-        
+
             # backprop
-            
             # loss.backward()
-            scaler.scale(loss/grad_accu_step).backward()
+            scaler.scale(loss / grad_accu_step).backward()
             # optimizer.step()
             if iter_num % grad_accu_step == 0:
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
-                
+
             t1 = time.time()
             # log
             batch_time = t1 - t0
@@ -234,11 +236,11 @@ def train():
                 # info = evaluate(model, eval_dataset, device)
                 # logger.debug(f'eval: {info}')
                 # ==========================================================================
-                save_path = Path(save_folder).joinpath('weights', f'swin_epoch_{epoch + 1}.pth')
+                save_path = Path(save_dir).joinpath('weights', f'swin_epoch_{epoch + 1}.pth')
                 save_path.parent.mkdir(exist_ok=True)
                 torch.save(model.state_dict(), save_path.__str__())
 
-    save_path = Path(save_folder).joinpath('weights', f'swin_Final.pth')
+    save_path = Path(save_dir).joinpath('weights', f'swin_Final.pth')
     save_path.parent.mkdir(exist_ok=True)
     torch.save(model.state_dict(), save_path.__str__())
     # torch.save(net.state_dict(), save_folder + 'Final_Retinaface.pth')

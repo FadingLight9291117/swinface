@@ -1,6 +1,7 @@
 # config.py
 cfg = {
-    'min_sizes': [[8, 16] ,[16, 32], [64, 128], [256, 512]],
+    'name': 'swinT',
+    'min_sizes': [[8, 16], [16, 32], [64, 128], [256, 512]],
     'steps': [4, 8, 16, 32],
     'variance': [0.1, 0.2],
     'clip': False,
@@ -15,7 +16,8 @@ cfg = {
     'pretrain': True,
     'return_layers': {'stage1': 1, 'stage2': 2, 'stage3': 3},
     'in_channel': 32,
-    'out_channel': 64
+    'out_channel': 64,
+    'pretrained': 'retrained/swin_tiny_patch4_window7_224.pth'
 }
 
 cfg_mnet = {
