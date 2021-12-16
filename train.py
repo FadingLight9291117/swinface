@@ -148,13 +148,6 @@ def train():
     train_dataloader = data.DataLoader(train_dataset, batch_size, shuffle=True, num_workers=num_workers,
                                        collate_fn=detection_collate)
 
-    # =============== prepare eval dataset ================================
-
-    val_dataset = WiderFaceDataset(valset_path, preproc=eval_transform, dataset_type='eval')
-    eval_dataloader = data.DataLoader(val_dataset, batch_size, shuffle=False, num_workers=num_workers,
-                                      collate_fn=detection_collate)
-    # =======================================================================
-
     epoch_begin = 0 + args.resume_epoch
     epoch_size = math.ceil(len(train_dataset) / batch_size)
 
