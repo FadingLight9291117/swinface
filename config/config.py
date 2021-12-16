@@ -1,10 +1,18 @@
 # config.py
 from easydict import EasyDict as edict
 
-cfg_tiny = edict(
-    model=edict(
-        type='swin_tiny',
-        pretrained='retrained/swin_tiny_patch4_window7_224.pth',
+cfg_tiny = dict(
+    model=dict(
+        type='tiny',
+        name='swin_tiny_patch4_window7_224',
+        drop_path_rate=0.2,
+        swin=dict(
+            embed_dim=96,
+            depths=[2, 2, 6, 2],
+            num_heads=[3, 6, 12, 24],
+            window_size=7,
+        ),
+        pretrained='pretrained/swin_tiny_patch4_window7_224.pth',
     ),
     min_sizes=[[8, 16], [16, 32], [64, 128], [256, 512]],
     steps=[4, 8, 16, 32],
@@ -18,12 +26,14 @@ cfg_tiny = edict(
     decay1=190,
     decay2=220,
     image_size=640,
-    return_layers=edict(stage1=1, stage2=2, stage3=3),
+    return_layers=dict(stage1=1, stage2=2, stage3=3),
     in_channel=32,
     out_channel=64,
     pretrain=True,
     pretrained='retrained/swin_tiny_patch4_window7_224.pth'
 )
+
+cfg_tiny = edict(cfg_tiny)
 
 cfg_mnet = {
     'name': 'mobilenet0.25',

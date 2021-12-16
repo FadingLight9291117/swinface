@@ -50,33 +50,34 @@ class LandmarkHead(nn.Module):
 class SwinFace(nn.Module):
     def __init__(self,
                  phase='train',
-                 swin_cfg=None,
+                 model_cfg=None,
                  in_channels_list=None,
-                 out_channels=64,
-                 pretrained='./pretrained/swin_tiny_patch4_window7_224.pth'):
+                 out_channels=64):
         super().__init__()
-        if in_channels_list is None:
-            in_channels_list = [96, 192, 384, 768]
         self.phase = phase
-        if swin_cfg is not None:
-            self.backbone = SwinTransformer(patch_size=swin_cfg.MODEL.SWIN.PATCH_SIZE,
-                                            in_chans=swin_cfg.MODEL.SWIN.IN_CHANS,
-                                            embed_dim=swin_cfg.MODEL.SWIN.EMBED_DIM,
-                                            depths=swin_cfg.MODEL.SWIN.DEPTHS,
-                                            num_heads=swin_cfg.MODEL.SWIN.NUM_HEADS,
-                                            window_size=swin_cfg.MODEL.SWIN.WINDOW_SIZE,
-                                            mlp_ratio=swin_cfg.MODEL.SWIN.MLP_RATIO,
-                                            qkv_bias=swin_cfg.MODEL.SWIN.QKV_BIAS,
-                                            qk_scale=swin_cfg.MODEL.SWIN.QK_SCALE,
-                                            drop_rate=swin_cfg.MODEL.DROP_RATE,
-                                            drop_path_rate=swin_cfg.MODEL.DROP_PATH_RATE,
-                                            ape=swin_cfg.MODEL.SWIN.APE,
-                                            patch_norm=swin_cfg.MODEL.SWIN.PATCH_NORM,
-                                            use_checkpoint=swin_cfg.TRAIN.USE_CHECKPOINT)
+
+        if model_cfg is not None:
+            self.backbone = \
+                SwinTransformer(embed_dim=model_cfg.model.swin.embed_dim,
+                                depths=model_cfg.model.swin.depths,
+                                num_heads=model_cfg.model.swin.num_heads,
+                                window_size=model_cfg.model.swin.window_size,
+                                ape=model_cfg.model.swin.ape,
+                                drop_path_rate=model_cfg.model.swin.drop_path_rate,
+                                patch_norm=model_cfg.model.swin.patch_norm,
+                                use_checkpoint=model_cfg.model.swin.use_checkpoint)
+            in_channels_list = model_cfg.model.neck.in_channels
         else:
             self.backbone = SwinTransformer()
-        if pretrained:
-            self.backbone.init_weights(pretrained)
+
+        # load swin transformer pretrained weight
+        if model_cfg.model.swin.pretrained:
+            swin_pretrained = model_cfg.model.swin.pretrained
+            self.backbone.init_weights(swin_pretrained)
+
+        if in_channels_list is None:
+            in_channels_list = [96, 192, 384, 768]
+
         self.fpn = FPN(in_channels_list, out_channels)
         self.ssh1 = SSH(out_channels, out_channels)
         self.ssh2 = SSH(out_channels, out_channels)
@@ -131,7 +132,9 @@ class SwinFace(nn.Module):
 
 
 if __name__ == '__main__':
-    model = SwinFace().cuda()
+    from config import cfg_tiny
+
+    model = SwinFace(model_cfg=cfg_tiny).cuda()
     x = torch.ones(1, 3, 1640, 640).cuda()
     y = model(x)
     print([i.size() for i in y])

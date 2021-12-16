@@ -19,7 +19,8 @@ import numpy as np
 
 from layers.modules import MultiBoxLoss
 from layers.functions.prior_box import PriorBox
-from data import WiderFaceDataset, detection_collate, preproc, cfg_tiny
+from data import WiderFaceDataset, detection_collate, preproc
+from config import cfg_tiny
 from swinFace import SwinFace
 from utils.nms.py_cpu_nms import py_cpu_nms
 from utils.timer import Timer
@@ -43,6 +44,7 @@ args = parser.parse_args()
 
 rgb_mean = (104, 117, 123)  # bgr order
 num_classes = 2
+model_cfg = cfg_tiny.model
 img_dim = cfg_tiny['image_size']
 num_gpu = cfg_tiny['ngpu']
 batch_size = cfg_tiny['batch_size']
@@ -93,7 +95,7 @@ logger.addHandler(fh)
 logger.addHandler(ch)
 # ========================================================================
 
-model = SwinFace()
+model = SwinFace(model_cfg=model_cfg)
 logger.debug("Printing net...")
 logger.debug(model)
 
@@ -101,18 +103,7 @@ logger.debug(model)
 if args.resume_net is not None:
     logger.debug('Loading resume network...')
     state_dict = torch.load(args.resume_net)
-    # create new OrderedDict that does not contain `module.`
-    from collections import OrderedDict
-
-    new_state_dict = OrderedDict()
-    for k, v in state_dict.items():
-        head = k[:7]
-        if head == 'module.':
-            name = k[7:]  # remove `module.`
-        else:
-            name = k
-        new_state_dict[name] = v
-    model.load_state_dict(new_state_dict)
+    model.load_state_dict(state_dict)
 # ========================================================================
 
 if num_gpu > 1 and gpu_train:
@@ -120,7 +111,7 @@ if num_gpu > 1 and gpu_train:
 else:
     model = model.cuda()
 
-cudnn.benchmark = False
+cudnn.benchmark = True
 
 optimizer = optim.SGD(model.parameters(), lr=initial_lr,
                       momentum=momentum, weight_decay=weight_decay)
