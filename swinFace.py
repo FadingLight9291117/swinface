@@ -48,12 +48,33 @@ class LandmarkHead(nn.Module):
 
 
 class SwinFace(nn.Module):
-    def __init__(self, img_size=(640, 640), in_channels_list=None, out_channels=64, phase='train', pretrained='./pretrained/swin_tiny_patch4_window7_224.pth'):
+    def __init__(self,
+                 phase='train',
+                 swin_cfg=None,
+                 in_channels_list=None,
+                 out_channels=64,
+                 pretrained='./pretrained/swin_tiny_patch4_window7_224.pth'):
         super().__init__()
         if in_channels_list is None:
             in_channels_list = [96, 192, 384, 768]
         self.phase = phase
-        self.backbone = SwinTransformer()
+        if swin_cfg is not None:
+            self.backbone = SwinTransformer(patch_size=swin_cfg.MODEL.SWIN.PATCH_SIZE,
+                                            in_chans=swin_cfg.MODEL.SWIN.IN_CHANS,
+                                            embed_dim=swin_cfg.MODEL.SWIN.EMBED_DIM,
+                                            depths=swin_cfg.MODEL.SWIN.DEPTHS,
+                                            num_heads=swin_cfg.MODEL.SWIN.NUM_HEADS,
+                                            window_size=swin_cfg.MODEL.SWIN.WINDOW_SIZE,
+                                            mlp_ratio=swin_cfg.MODEL.SWIN.MLP_RATIO,
+                                            qkv_bias=swin_cfg.MODEL.SWIN.QKV_BIAS,
+                                            qk_scale=swin_cfg.MODEL.SWIN.QK_SCALE,
+                                            drop_rate=swin_cfg.MODEL.DROP_RATE,
+                                            drop_path_rate=swin_cfg.MODEL.DROP_PATH_RATE,
+                                            ape=swin_cfg.MODEL.SWIN.APE,
+                                            patch_norm=swin_cfg.MODEL.SWIN.PATCH_NORM,
+                                            use_checkpoint=swin_cfg.TRAIN.USE_CHECKPOINT)
+        else:
+            self.backbone = SwinTransformer()
         if pretrained:
             self.backbone.init_weights(pretrained)
         self.fpn = FPN(in_channels_list, out_channels)

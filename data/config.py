@@ -1,24 +1,29 @@
 # config.py
-cfg = {
-    'name': 'swinT',
-    'min_sizes': [[8, 16], [16, 32], [64, 128], [256, 512]],
-    'steps': [4, 8, 16, 32],
-    'variance': [0.1, 0.2],
-    'clip': False,
-    'loc_weight': 2.0,
-    'gpu_train': True,
-    'batch_size': 8,
-    'ngpu': 1,
-    'epoch': 250,
-    'decay1': 190,
-    'decay2': 220,
-    'image_size': 640,
-    'pretrain': True,
-    'return_layers': {'stage1': 1, 'stage2': 2, 'stage3': 3},
-    'in_channel': 32,
-    'out_channel': 64,
-    'pretrained': 'retrained/swin_tiny_patch4_window7_224.pth'
-}
+from easydict import EasyDict as edict
+
+cfg_tiny = edict(
+    model=edict(
+        type='swin_tiny',
+        pretrained='retrained/swin_tiny_patch4_window7_224.pth',
+    ),
+    min_sizes=[[8, 16], [16, 32], [64, 128], [256, 512]],
+    steps=[4, 8, 16, 32],
+    variance=[0.1, 0.2],
+    clip=False,
+    loc_weight=2.0,
+    gpu_train=True,
+    batch_size=8,
+    ngpu=1,
+    epoch=250,
+    decay1=190,
+    decay2=220,
+    image_size=640,
+    return_layers=edict(stage1=1, stage2=2, stage3=3),
+    in_channel=32,
+    out_channel=64,
+    pretrain=True,
+    pretrained='retrained/swin_tiny_patch4_window7_224.pth'
+)
 
 cfg_mnet = {
     'name': 'mobilenet0.25',

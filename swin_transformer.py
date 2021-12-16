@@ -12,6 +12,7 @@ import torch.utils.checkpoint as checkpoint
 import numpy as np
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
+
 # from mmcv_custom import load_checkpoint
 # from mmdet.utils import get_root_logger
 # from ..builder import BACKBONES
@@ -106,11 +107,11 @@ class WindowAttention(nn.Module):
         coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
         coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
         relative_coords = coords_flatten[:, :, None] - \
-            coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+                          coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
         relative_coords = relative_coords.permute(
             1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
         relative_coords[:, :, 0] += self.window_size[0] - \
-            1  # shift to start from 0
+                                    1  # shift to start from 0
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
@@ -570,7 +571,7 @@ class SwinTransformer(nn.Module):
                 drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                 norm_layer=norm_layer,
                 downsample=PatchMerging if (
-                    i_layer < self.num_layers - 1) else None,
+                        i_layer < self.num_layers - 1) else None,
                 use_checkpoint=use_checkpoint)
             self.layers.append(layer)
 
@@ -645,17 +646,16 @@ class SwinTransformer(nn.Module):
         x = self.pos_drop(x)
 
         outs = []
-        for i in range(self.num_layers):
+        for i in range(self.num_layers):  # range(4)
             layer = self.layers[i]
             x_out, H, W, x, Wh, Ww = layer(x, Wh, Ww)
 
-            if i in self.out_indices:
+            if i in self.out_indices:  # (0, 1, 2, 3)
                 norm_layer = getattr(self, f'norm{i}')
                 x_out = norm_layer(x_out)
 
                 out = x_out.view(-1, H, W,
                                  self.num_features[i]).permute(0, 3, 1, 2).contiguous()
-                # print(out.size())
                 outs.append(out)
 
         return tuple(outs)
@@ -668,8 +668,9 @@ class SwinTransformer(nn.Module):
 
 if __name__ == '__main__':
     model = SwinTransformer()
-    model.load_state_dict(torch.load('./pretrained/swin_tiny_patch4_window7_224.pth')['model'], strict=False)
+    model.init_weights(pretrained='./pretrained/swin_tiny_patch4_window7_224.pth')
     x = torch.randn(1, 3, 224, 224)
     x = model(x)
     print([a.size() for a in x])
     # print(model)
+    a = torch.load('./pretrained/swin_tiny_patch4_window7_224.pth')

@@ -19,7 +19,7 @@ import numpy as np
 
 from layers.modules import MultiBoxLoss
 from layers.functions.prior_box import PriorBox
-from data import WiderFaceDataset, detection_collate, preproc, cfg
+from data import WiderFaceDataset, detection_collate, preproc, cfg_tiny
 from swinFace import SwinFace
 from utils.nms.py_cpu_nms import py_cpu_nms
 from utils.timer import Timer
@@ -43,11 +43,11 @@ args = parser.parse_args()
 
 rgb_mean = (104, 117, 123)  # bgr order
 num_classes = 2
-img_dim = cfg['image_size']
-num_gpu = cfg['ngpu']
-batch_size = cfg['batch_size']
-max_epoch = cfg['epoch']
-gpu_train = cfg['gpu_train']
+img_dim = cfg_tiny['image_size']
+num_gpu = cfg_tiny['ngpu']
+batch_size = cfg_tiny['batch_size']
+max_epoch = cfg_tiny['epoch']
+gpu_train = cfg_tiny['gpu_train']
 
 num_workers = args.num_workers
 momentum = args.momentum
@@ -126,7 +126,7 @@ optimizer = optim.SGD(model.parameters(), lr=initial_lr,
                       momentum=momentum, weight_decay=weight_decay)
 criterion = MultiBoxLoss(num_classes, 0.35, True, 0, True, 7, 0.35, False)
 
-priorbox = PriorBox(cfg, image_size=(img_dim, img_dim))
+priorbox = PriorBox(cfg_tiny, image_size=(img_dim, img_dim))
 with torch.no_grad():
     priors = priorbox.forward()
     priors = priors.cuda()
@@ -171,7 +171,7 @@ def train():
     max_iter = max_epoch * epoch_size
 
     iter_num = start_iter
-    stepvalues = (cfg['decay1'] * epoch_size, cfg['decay2'] * epoch_size)
+    stepvalues = (cfg_tiny['decay1'] * epoch_size, cfg_tiny['decay2'] * epoch_size)
     step_index = 0
 
     scaler = amp.GradScaler()
@@ -196,7 +196,7 @@ def train():
             with amp.autocast():
                 out = model(images)
                 loss_l, loss_c, loss_landm = criterion(out, priors, targets)
-                loss = cfg['loc_weight'] * loss_l + loss_c + loss_landm
+                loss = cfg_tiny['loc_weight'] * loss_l + loss_c + loss_landm
 
             # backprop
             # loss.backward()
@@ -231,7 +231,7 @@ def train():
             tb_writer.add_scalar('cls_loss', info['loss']['Cls'], iter_num, walltime=None)
             tb_writer.add_scalar('landm_loss', info['loss']['Landm'], iter_num, walltime=None)
 
-            if (epoch + 1) % 5 == 0 or ((epoch + 1) % 5 == 0 and (epoch + 1) > cfg['decay1']):
+            if (epoch + 1) % 5 == 0 or ((epoch + 1) % 5 == 0 and (epoch + 1) > cfg_tiny['decay1']):
                 # eval =====================================================================
                 # info = evaluate(model, eval_dataset, device)
                 # logger.debug(f'eval: {info}')
@@ -246,67 +246,6 @@ def train():
     # torch.save(net.state_dict(), save_folder + 'Final_Retinaface.pth')
 
     # ======================================================================================================
-
-
-@torch.no_grad()
-def eval(model, eval_dataset, device):
-    model.eval()
-    model = model.to(device)
-    for i, (images, targets) in enumerate(eval_dataset):
-        img_h, img_w = images[0].size()[2:4]
-        scale = torch.Tensor([img_w, img_h, img_w, img_h])
-        images[:, 0, :, :] -= rgb_mean[0]
-        images[:, 1, :, :] -= rgb_mean[1]
-        images[:, 2, :, :] -= rgb_mean[2]
-
-        images = images.to(device)
-        scale = scale.to(device)
-
-        locs, confs, _ = model(images)  # forward pass
-
-        priorbox = PriorBox(cfg, image_size=(img_h, img_w))
-        priors = priorbox.forward()
-        priors = priors.to(device)
-        prior_data = priors.data
-
-        preds = []
-        for loc, conf in zip(locs, confs):
-            boxes = decode(loc.data.squeeze(0), prior_data, cfg['variance'])
-            boxes = boxes * scale
-            boxes = boxes.cpu().numpy()
-            scores = conf.squeeze(0).data.cpu().numpy()[:, 1]
-            landms = decode_landm(landms.data.squeeze(0), prior_data, cfg['variance'])
-            scale1 = torch.Tensor([img_w, img_h] * 5)
-            scale1 = scale1.to(device)
-            landms = landms * scale1
-            landms = landms.cpu().numpy()
-
-            # ignore low scores
-            inds = np.where(scores > args.confidence_threshold)[0]
-            boxes = boxes[inds]
-            landms = landms[inds]
-            scores = scores[inds]
-
-            # keep top-K before NMS
-            order = scores.argsort()[::-1][:args.top_k]
-            boxes = boxes[order]
-            landms = landms[order]
-            scores = scores[order]
-
-            # do NMS
-            dets = np.hstack((boxes, scores[:, np.newaxis])).astype(np.float32, copy=False)
-            keep = py_cpu_nms(dets, args.nms_threshold)
-            # keep = nms(dets, args.nms_threshold,force_cpu=args.cpu)
-            dets = dets[keep, :]
-            landms = landms[keep]
-
-            # keep top-K faster NMS
-            dets = dets[:args.keep_top_k, :]
-            landms = landms[:args.keep_top_k, :]
-
-            dets = np.concatenate((dets, landms), axis=1)
-
-            preds.append(dets)
 
 
 def adjust_learning_rate(optimizer, gamma, epoch, step_index, iteration, epoch_size):
@@ -326,7 +265,3 @@ def adjust_learning_rate(optimizer, gamma, epoch, step_index, iteration, epoch_s
 
 if __name__ == '__main__':
     train()
-    # evaluate(model, eval_dataset, device)
-
-    # model = SwinFace()
-    # model.load_state_dict(torch.load('./result/2021124125/weights/swin_epoch_35.pth'))
