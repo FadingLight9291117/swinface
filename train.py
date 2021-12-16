@@ -5,6 +5,7 @@ import datetime
 import math
 import logging
 from pathlib import Path
+from collections import OrderedDict
 
 import torch
 import torch.optim as optim
@@ -20,7 +21,7 @@ import numpy as np
 from layers.modules import MultiBoxLoss
 from layers.functions.prior_box import PriorBox
 from data import WiderFaceDataset, detection_collate, preproc
-from config import cfg_tiny
+from config import cfg_tiny, cfg_small
 from swinFace import SwinFace
 from utils.nms.py_cpu_nms import py_cpu_nms
 from utils.timer import Timer
@@ -28,38 +29,46 @@ from utils.box_utils import decode, decode_landm
 import metrics
 
 parser = argparse.ArgumentParser(description='Retinaface Training')
-parser.add_argument('--trainset_path', default='./data/widerface/train/', help='Training dataset directory')
-parser.add_argument('--valset_path', default='./data/widerface/val/', help='Evaling dataset directory')
-parser.add_argument('--num_workers', default=4, type=int, help='Number of workers used in dataloading')
+parser.add_argument('--network', default='small', help='')
+parser.add_argument('--training-dataset', default='./data/widerface/train/label.txt', help='Training dataset directory')
+parser.add_argument('--num-workers', default=4, type=int, help='Number of workers used in dataloading')
 parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
-parser.add_argument('--resume_net', default=None, help='resume net for retraining')
-parser.add_argument('--resume_epoch', default=0, type=int, help='resume iter for retraining')
-parser.add_argument('--weight_decay', default=5e-4, type=float, help='Weight decay for SGD')
+parser.add_argument('--resume-net', default=None, help='resume net for retraining')
+parser.add_argument('--resume-epoch', default=0, type=int, help='resume iter for retraining')
+parser.add_argument('--weight-decay', default=5e-4, type=float, help='Weight decay for SGD')
 parser.add_argument('--gamma', default=0.1, type=float, help='Gamma update for SGD')
-parser.add_argument('--project', default='./runs/train', help='Location to save checkpoint models')
+parser.add_argument('--project', default='./runs/train_small', help='Location to save checkpoint models')
 parser.add_argument('--name', default='exp', help='save to project/name')
 
 args = parser.parse_args()
-
-rgb_mean = (104, 117, 123)  # bgr order
-num_classes = 2
-model_cfg = cfg_tiny.model
-img_dim = cfg_tiny['image_size']
-num_gpu = cfg_tiny['ngpu']
-batch_size = cfg_tiny['batch_size']
-max_epoch = cfg_tiny['epoch']
-gpu_train = cfg_tiny['gpu_train']
 
 num_workers = args.num_workers
 momentum = args.momentum
 weight_decay = args.weight_decay
 initial_lr = args.lr
 gamma = args.gamma
-trainset_path = args.trainset_path
-valset_path = args.valset_path
+training_dataset = args.training_dataset
 project = args.project
 name = args.name
+
+rgb_mean = (104, 117, 123)  # bgr order
+num_classes = 2
+if args.network == 'tiny':
+    cfg = cfg_tiny
+elif args.network == 'small':
+    cfg = cfg_small
+else:
+    msg = f'{args.network} 参数错误'
+    raise ValueError(msg)
+
+model_cfg = cfg.model
+train_cfg = cfg.train
+img_dim = train_cfg.image_size
+num_gpu = train_cfg.ngpu
+batch_size = train_cfg.batch_size
+max_epoch = train_cfg.epoch
+gpu_train = train_cfg.gpu_train
 
 # config save_dir========================================================
 Path(project).mkdir(exist_ok=True, parents=True)
@@ -72,7 +81,7 @@ Path(save_dir).mkdir()
 # ======================================================================
 
 # tensorboard log
-tb_writer = SummaryWriter(str(Path(save_dir) / 'log'))
+tb_writer = SummaryWriter(os.path.join(save_dir, 'log'))
 
 # config log =============================================================
 log_path = f'{save_dir}/train.log'
@@ -99,13 +108,6 @@ model = SwinFace(model_cfg=model_cfg)
 logger.debug("Printing net...")
 logger.debug(model)
 
-# Resume =================================================================
-if args.resume_net is not None:
-    logger.debug('Loading resume network...')
-    state_dict = torch.load(args.resume_net)
-    model.load_state_dict(state_dict)
-# ========================================================================
-
 if num_gpu > 1 and gpu_train:
     model = torch.nn.DataParallel(model).cuda()
 else:
@@ -117,7 +119,25 @@ optimizer = optim.SGD(model.parameters(), lr=initial_lr,
                       momentum=momentum, weight_decay=weight_decay)
 criterion = MultiBoxLoss(num_classes, 0.35, True, 0, True, 7, 0.35, False)
 
-priorbox = PriorBox(cfg_tiny, image_size=(img_dim, img_dim))
+scaler = amp.GradScaler()
+
+# Resume =================================================================
+if args.resume_net is not None:
+    logger.debug('Loading resume network...')
+    state_dict = torch.load(args.resume_net)
+    for key in state_dict.keys():
+        if key == 'model':
+            model.load_state_dict(state_dict[key])
+        if key == 'optimizer':
+            optimizer.load_state_dict(state_dict[key])
+        if key == 'scaler':
+            scaler.load_state_dict(state_dict[key])
+        # if key == 'scheduler':
+        #     scheduler.load_state_dict(state_dict[key])
+# ========================================================================
+
+
+priorbox = PriorBox(train_cfg, image_size=(img_dim, img_dim))
 with torch.no_grad():
     priors = priorbox.forward()
     priors = priors.cuda()
@@ -144,7 +164,7 @@ grad_accu_step = 8
 
 def train():
     logger.debug('Loading Dataset...')
-    train_dataset = WiderFaceDataset(trainset_path, preproc(img_dim, rgb_mean))
+    train_dataset = WiderFaceDataset(training_dataset, preproc(img_dim, rgb_mean))
     train_dataloader = data.DataLoader(train_dataset, batch_size, shuffle=True, num_workers=num_workers,
                                        collate_fn=detection_collate)
 
@@ -155,10 +175,9 @@ def train():
     max_iter = max_epoch * epoch_size
 
     iter_num = start_iter
-    stepvalues = (cfg_tiny['decay1'] * epoch_size, cfg_tiny['decay2'] * epoch_size)
+    stepvalues = (train_cfg['decay1'] * epoch_size, train_cfg['decay2'] * epoch_size)
     step_index = 0
 
-    scaler = amp.GradScaler()
     # train ==================================================================================================
     for epoch in range(epoch_begin, max_epoch):
         for i, (images, targets) in enumerate(train_dataloader):
@@ -180,7 +199,7 @@ def train():
             with amp.autocast():
                 out = model(images)
                 loss_l, loss_c, loss_landm = criterion(out, priors, targets)
-                loss = cfg_tiny['loc_weight'] * loss_l + loss_c + loss_landm
+                loss = cfg_tiny.train['loc_weight'] * loss_l + loss_c + loss_landm
 
             # backprop
             # loss.backward()
@@ -222,15 +241,30 @@ def train():
                 # ==========================================================================
                 save_path = Path(save_dir).joinpath('weights', f'swin_epoch_{epoch + 1}.pth')
                 save_path.parent.mkdir(exist_ok=True)
-                torch.save(model.state_dict(), save_path.__str__())
+                save_state(save_path, model=model, optimizer=optimizer, scaler=scaler)
 
     save_path = Path(save_dir).joinpath('weights', f'swin_Final.pth')
     save_path.parent.mkdir(exist_ok=True)
-    torch.save(model.state_dict(), save_path.__str__())
-    # torch.save(net.state_dict(), save_folder + 'Final_Retinaface.pth')
+    save_state(save_path, model=model, optimizer=optimizer, scaler=scaler)
 
-    # ======================================================================================================
 
+def save_state(save_path, model=None, optimizer=None, scheduler=None, scaler=None):
+    if isinstance(save_path, str):
+        save_path = Path(save_path)
+    if not save_path.parent.exists():
+        save_path.parent.mkdir(exist_ok=True, parents=True)
+
+    status = OrderedDict(model=model.state_dict(),
+                         optimizer=optimizer.state_dict(),
+                         scheduler=scheduler.state_dict(),
+                         scaler=scaler.state_dict())
+
+    torch.save(status, save_path)
+
+
+# sche = optim.lr_scheduler.LambdaLR(optimizer, lambda x: lr)
+# sche.step()
+# sche.state_dict()
 
 def adjust_learning_rate(optimizer, gamma, epoch, step_index, iteration, epoch_size):
     """Sets the learning rate

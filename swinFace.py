@@ -58,21 +58,21 @@ class SwinFace(nn.Module):
 
         if model_cfg is not None:
             self.backbone = \
-                SwinTransformer(embed_dim=model_cfg.model.swin.embed_dim,
-                                depths=model_cfg.model.swin.depths,
-                                num_heads=model_cfg.model.swin.num_heads,
-                                window_size=model_cfg.model.swin.window_size,
-                                ape=model_cfg.model.swin.ape,
-                                drop_path_rate=model_cfg.model.swin.drop_path_rate,
-                                patch_norm=model_cfg.model.swin.patch_norm,
-                                use_checkpoint=model_cfg.model.swin.use_checkpoint)
-            in_channels_list = model_cfg.model.neck.in_channels
+                SwinTransformer(embed_dim=model_cfg.swin.embed_dim,
+                                depths=model_cfg.swin.depths,
+                                num_heads=model_cfg.swin.num_heads,
+                                window_size=model_cfg.swin.window_size,
+                                ape=model_cfg.swin.ape,
+                                drop_path_rate=model_cfg.swin.drop_path_rate,
+                                patch_norm=model_cfg.swin.patch_norm,
+                                use_checkpoint=model_cfg.swin.use_checkpoint)
+            in_channels_list = model_cfg.neck.in_channels
         else:
             self.backbone = SwinTransformer()
 
         # load swin transformer pretrained weight
-        if model_cfg.model.swin.pretrained:
-            swin_pretrained = model_cfg.model.swin.pretrained
+        if model_cfg.swin.pretrained:
+            swin_pretrained = model_cfg.swin.pretrained
             self.backbone.init_weights(swin_pretrained)
 
         if in_channels_list is None:
@@ -134,7 +134,7 @@ class SwinFace(nn.Module):
 if __name__ == '__main__':
     from config import cfg_tiny
 
-    model = SwinFace(model_cfg=cfg_tiny).cuda()
+    model = SwinFace(model_cfg=cfg_tiny.model).cuda()
     x = torch.ones(1, 3, 1640, 640).cuda()
     y = model(x)
     print([i.size() for i in y])
