@@ -101,7 +101,7 @@ ch.setLevel(logging.DEBUG)
 ch.setFormatter(formatter)
 
 logger.addHandler(fh)
-logger.addHandler(ch)
+# logger.addHandler(ch)
 # ========================================================================
 
 model = SwinFace(model_cfg=model_cfg)
@@ -150,16 +150,16 @@ def eval_transform(img: np.ndarray, targ):
     bbox = targ[:4]
     landms = targ[4:-1]
     label = targ[-1]
-    bbox[0::2] /= img_w
-    bbox[1::2] /= img_h
-    landms[0::2] /= img_w
-    landms[1::2] /= img_h
+    bbox[0::2]      /= img_w
+    bbox[1::2]      /= img_h
+    landms[0::2]    /= img_w
+    landms[1::2]    /= img_h
 
     return img, targ
 
 
 device = 'cuda'
-grad_accu_step = 8
+grad_accu_step = train_cfg.batch_size
 
 
 def train():
@@ -181,6 +181,8 @@ def train():
     # train ==================================================================================================
     for epoch in range(epoch_begin, max_epoch):
         for i, (images, targets) in enumerate(train_dataloader):
+            # print(images.size())
+            # print(sum([targ.size(0) for targ in targets]))
             # if i == 10: break # test
             model.train()
             t0 = time.time()
@@ -215,24 +217,24 @@ def train():
             batch_time = t1 - t0
             eta = int(batch_time * (max_iter - iter_num))
 
-            info = {
-                'Epoch': f'{epoch}/{max_epoch}',
-                'step': f'{i + 1}/{epoch_size}',
-                'Iter': f'{iter_num}/{max_iter}',
-                'loss': {
-                    'Loc': float(f'{loss_l.item():.4f}'),
-                    'Cls': float(f'{loss_c.item():.4f}'),
-                    'Landm': float(f'{loss_landm.item():.4f}'),
-                },
-                'LR': float(f'{lr:.8f}'),
-                'Batchtime': float(f'{batch_time:.4f}'),
-                'ETA': str(datetime.timedelta(seconds=eta)),
-            }
+            info = dict(
+                Epoch=f'{epoch}/{max_epoch}',
+                Step=f'{i + 1}/{epoch_size}',
+                Iter=f'{iter_num}/{max_iter}',
+                Loss=dict(
+                    Loc=float(f'{loss_l.item():.4f}'),
+                    Cls=float(f'{loss_c.item():.4f}'),
+                    Landm=float(f'{loss_landm.item():.4f}'),
+                ),
+                LR=float(f'{lr:.8f}'),
+                Batchtime=float(f'{batch_time:.4f}'),
+                ETA=str(datetime.timedelta(seconds=eta)),
+            )
             logger.debug('train: ' + str(info))
 
-            tb_writer.add_scalar('loc_loss', info['loss']['Loc'], iter_num, walltime=None)
-            tb_writer.add_scalar('cls_loss', info['loss']['Cls'], iter_num, walltime=None)
-            tb_writer.add_scalar('landm_loss', info['loss']['Landm'], iter_num, walltime=None)
+            tb_writer.add_scalar('loc_loss',    info['Loss']['Loc'],    iter_num, walltime=None)
+            tb_writer.add_scalar('cls_loss',    info['Loss']['Cls'],    iter_num, walltime=None)
+            tb_writer.add_scalar('landm_loss',  info['Loss']['Landm'],  iter_num, walltime=None)
 
             if (epoch + 1) % 5 == 0 or ((epoch + 1) % 5 == 0 and (epoch + 1) > cfg_tiny['decay1']):
                 # eval =====================================================================
@@ -254,10 +256,10 @@ def save_state(save_path, model=None, optimizer=None, scheduler=None, scaler=Non
     if not save_path.parent.exists():
         save_path.parent.mkdir(exist_ok=True, parents=True)
 
-    status = OrderedDict(model=model.state_dict(),
-                         optimizer=optimizer.state_dict(),
-                         scheduler=scheduler.state_dict(),
-                         scaler=scaler.state_dict())
+    status = OrderedDict(model=model.state_dict()           if model        is not None else None,
+                         optimizer=optimizer.state_dict()   if optimizer    is not None else None,
+                         scheduler=scheduler.state_dict()   if scheduler    is not None else None,
+                         scaler=scaler.state_dict()         if scaler       is not None else None)
 
     torch.save(status, save_path)
 

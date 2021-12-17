@@ -122,5 +122,4 @@ class MultiBoxLoss(nn.Module):
         loss_l /= N
         loss_c /= N
         loss_landm /= N1
-
         return loss_l, loss_c, loss_landm
