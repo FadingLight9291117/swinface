@@ -17,6 +17,7 @@ from torchvision import transforms
 from torchvision.ops import nms
 import cv2
 import numpy as np
+from koila import LazyTensor, lazy
 
 from layers.modules import MultiBoxLoss
 from layers.functions.prior_box import PriorBox
@@ -40,6 +41,7 @@ parser.add_argument('--weight-decay', default=5e-4, type=float, help='Weight dec
 parser.add_argument('--gamma', default=0.1, type=float, help='Gamma update for SGD')
 parser.add_argument('--project', default='./runs/train_small', help='Location to save checkpoint models')
 parser.add_argument('--name', default='exp', help='save to project/name')
+parser.add_argument('--verbose', action='store_true', help='input logs to termainal.')
 
 args = parser.parse_args()
 
@@ -51,6 +53,7 @@ gamma = args.gamma
 training_dataset = args.training_dataset
 project = args.project
 name = args.name
+verbose = args.verbose
 
 rgb_mean = (104, 117, 123)  # bgr order
 num_classes = 2
@@ -69,6 +72,7 @@ num_gpu = train_cfg.ngpu
 batch_size = train_cfg.batch_size
 max_epoch = train_cfg.epoch
 gpu_train = train_cfg.gpu_train
+device = 'cuda' if train_cfg.gpu_train else 'cpu'
 
 # config save_dir========================================================
 Path(project).mkdir(exist_ok=True, parents=True)
@@ -96,12 +100,12 @@ fh = logging.FileHandler(log_path)
 fh.setLevel(logging.DEBUG)
 fh.setFormatter(formatter)
 
-ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
-ch.setFormatter(formatter)
-
 logger.addHandler(fh)
-# logger.addHandler(ch)
+if verbose:
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
 # ========================================================================
 
 model = SwinFace(model_cfg=model_cfg)
@@ -150,15 +154,14 @@ def eval_transform(img: np.ndarray, targ):
     bbox = targ[:4]
     landms = targ[4:-1]
     label = targ[-1]
-    bbox[0::2]      /= img_w
-    bbox[1::2]      /= img_h
-    landms[0::2]    /= img_w
-    landms[1::2]    /= img_h
+    bbox[0::2] /= img_w
+    bbox[1::2] /= img_h
+    landms[0::2] /= img_w
+    landms[1::2] /= img_h
 
     return img, targ
 
 
-device = 'cuda'
 grad_accu_step = train_cfg.batch_size
 
 
@@ -232,9 +235,9 @@ def train():
             )
             logger.debug('train: ' + str(info))
 
-            tb_writer.add_scalar('loc_loss',    info['Loss']['Loc'],    iter_num, walltime=None)
-            tb_writer.add_scalar('cls_loss',    info['Loss']['Cls'],    iter_num, walltime=None)
-            tb_writer.add_scalar('landm_loss',  info['Loss']['Landm'],  iter_num, walltime=None)
+            tb_writer.add_scalar('loc_loss', info['Loss']['Loc'], iter_num, walltime=None)
+            tb_writer.add_scalar('cls_loss', info['Loss']['Cls'], iter_num, walltime=None)
+            tb_writer.add_scalar('landm_loss', info['Loss']['Landm'], iter_num, walltime=None)
 
             if (epoch + 1) % 5 == 0 or ((epoch + 1) % 5 == 0 and (epoch + 1) > cfg_tiny['decay1']):
                 # eval =====================================================================
@@ -256,10 +259,10 @@ def save_state(save_path, model=None, optimizer=None, scheduler=None, scaler=Non
     if not save_path.parent.exists():
         save_path.parent.mkdir(exist_ok=True, parents=True)
 
-    status = OrderedDict(model=model.state_dict()           if model        is not None else None,
-                         optimizer=optimizer.state_dict()   if optimizer    is not None else None,
-                         scheduler=scheduler.state_dict()   if scheduler    is not None else None,
-                         scaler=scaler.state_dict()         if scaler       is not None else None)
+    status = OrderedDict(model=model.state_dict() if model is not None else None,
+                         optimizer=optimizer.state_dict() if optimizer is not None else None,
+                         scheduler=scheduler.state_dict() if scheduler is not None else None,
+                         scaler=scaler.state_dict() if scaler is not None else None)
 
     torch.save(status, save_path)
 

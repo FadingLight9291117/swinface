@@ -15,7 +15,10 @@ model = edict(
 
         pretrained='pretrained/swin_tiny_patch4_window7_224.pth',
     ),
-    neck=dict(in_channels=[96, 192, 384, 768])
+    neck=dict(
+        in_channels=[96, 192, 384, 768],
+        out_channel=64,
+    ),
 )
 
 train = edict(
@@ -31,8 +34,5 @@ train = edict(
     decay1=190,
     decay2=220,
     image_size=640,
-    return_layers=dict(stage1=1, stage2=2, stage3=3),
-    in_channel=32,
-    out_channel=64,
     pretrain=True,
 )

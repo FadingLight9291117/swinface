@@ -4,7 +4,7 @@ import argparse
 import torch
 import torch.backends.cudnn as cudnn
 import numpy as np
-from data import cfg_mnet, cfg_re50, cfg_tiny
+from config import cfg_small, cfg_tiny
 from layers.functions.prior_box import PriorBox
 from utils.nms.py_cpu_nms import py_cpu_nms
 import cv2
@@ -68,10 +68,12 @@ def load_model(model, pretrained_path, load_to_cpu):
 if __name__ == '__main__':
     torch.set_grad_enabled(False)
 
-    cfg = cfg_tiny
+    model_cfg = cfg_small.model
+    cfg = cfg_small.train
     # net and model
-    net = SwinFace(phase='test')
-    net = load_model(net, args.trained_model, args.cpu)
+    net = SwinFace(phase='test',model_cfg=model_cfg)
+    # net = load_model(net, args.trained_model, args.cpu)
+    net.load_state_dict(torch.load(args.trained_model)['model'])
     net.eval()
     print('Finished loading model!')
     print(net)

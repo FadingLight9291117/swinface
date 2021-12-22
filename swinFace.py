@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,10 +9,11 @@ from net import FPN, SSH
 
 
 class ClassHead(nn.Module):
-    def __init__(self, in_channels=512, num_anchors=3):
+    def __init__(self, in_channels=512, num_anchors=4):
         super().__init__()
         self.num_anchors = num_anchors
-        self.conv1x1 = nn.Conv2d(in_channels, self.num_anchors * 2, kernel_size=(1, 1), stride=1, padding=0)
+        self.conv1x1 = nn.Conv2d(
+            in_channels, self.num_anchors * 2, kernel_size=(1, 1), stride=1, padding=0)
 
     def forward(self, x):
         out = self.conv1x1(x)
@@ -24,9 +23,10 @@ class ClassHead(nn.Module):
 
 
 class BboxHead(nn.Module):
-    def __init__(self, in_channels=512, num_anchors=3):
+    def __init__(self, in_channels=512, num_anchors=4):
         super().__init__()
-        self.conv1x1 = nn.Conv2d(in_channels, num_anchors * 4, kernel_size=(1, 1), stride=1, padding=0)
+        self.conv1x1 = nn.Conv2d(
+            in_channels, num_anchors * 4, kernel_size=(1, 1), stride=1, padding=0)
 
     def forward(self, x):
         out = self.conv1x1(x)
@@ -36,9 +36,10 @@ class BboxHead(nn.Module):
 
 
 class LandmarkHead(nn.Module):
-    def __init__(self, in_channels=512, num_anchors=3):
+    def __init__(self, in_channels=512, num_anchors=4):
         super().__init__()
-        self.conv1x1 = nn.Conv2d(in_channels, num_anchors * 10, kernel_size=(1, 1), stride=1, padding=0)
+        self.conv1x1 = nn.Conv2d(
+            in_channels, num_anchors * 10, kernel_size=(1, 1), stride=1, padding=0)
 
     def forward(self, x):
         out = self.conv1x1(x)
@@ -51,10 +52,11 @@ class SwinFace(nn.Module):
     def __init__(self,
                  phase='train',
                  model_cfg=None,
-                 in_channels_list=None,
-                 out_channels=64):
+                 pretrain=True,
+                 ):
         super().__init__()
         self.phase = phase
+        self.pretain = pretrain
 
         if model_cfg is not None:
             self.backbone = \
@@ -66,27 +68,27 @@ class SwinFace(nn.Module):
                                 drop_path_rate=model_cfg.swin.drop_path_rate,
                                 patch_norm=model_cfg.swin.patch_norm,
                                 use_checkpoint=model_cfg.swin.use_checkpoint)
-            in_channels_list = model_cfg.neck.in_channels
+            self.in_channels_list = model_cfg.neck.in_channels
+            self.out_channel = model_cfg.neck.out_channel
         else:
             self.backbone = SwinTransformer()
+            self.in_channels_list = [96, 192, 384, 768]
+            self.out_channel = 64
 
         # load swin transformer pretrained weight
-        if model_cfg.swin.pretrained:
+        if model_cfg.swin.pretrained and self.phase == 'train' and self.pretain:
             swin_pretrained = model_cfg.swin.pretrained
             self.backbone.init_weights(swin_pretrained)
 
-        if in_channels_list is None:
-            in_channels_list = [96, 192, 384, 768]
+        self.fpn = FPN(self.in_channels_list, self.out_channel)
+        self.ssh1 = SSH(self.out_channel, self.out_channel)
+        self.ssh2 = SSH(self.out_channel, self.out_channel)
+        self.ssh3 = SSH(self.out_channel, self.out_channel)
+        self.ssh4 = SSH(self.out_channel, self.out_channel)
 
-        self.fpn = FPN(in_channels_list, out_channels)
-        self.ssh1 = SSH(out_channels, out_channels)
-        self.ssh2 = SSH(out_channels, out_channels)
-        self.ssh3 = SSH(out_channels, out_channels)
-        self.ssh4 = SSH(out_channels, out_channels)
-
-        self.ClassHead = self._make_class_head(fpn_num=4, in_channels=out_channels)
-        self.BboxHead = self._make_bbox_head(fpn_num=4, in_channels=out_channels)
-        self.LandmarkHead = self._make_landmark_head(fpn_num=4, in_channels=out_channels)
+        self.ClassHead = self._make_class_head(fpn_num=4, in_channels=self.out_channel)
+        self.BboxHead = self._make_bbox_head(fpn_num=4, in_channels=self.out_channel)
+        self.LandmarkHead = self._make_landmark_head(fpn_num=4, in_channels=self.out_channel)
 
     def forward(self, x):
         backbone_outs = self.backbone(x)
@@ -104,9 +106,17 @@ class SwinFace(nn.Module):
         ldm_regressions = torch.cat([self.LandmarkHead[i](feature) for i, feature in enumerate(features)], dim=1)
 
         if self.phase == 'train':
-            output = (bbox_regressions, classifications, ldm_regressions)
+            output = (
+                bbox_regressions,
+                classifications,
+                ldm_regressions
+            )
         else:
-            output = (bbox_regressions, F.softmax(classifications, dim=-1), ldm_regressions)
+            output = (
+                bbox_regressions,
+                F.softmax(classifications, dim=-1),
+                ldm_regressions
+            )
         return output
 
     @staticmethod

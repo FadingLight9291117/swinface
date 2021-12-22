@@ -1,1 +1,2 @@
-python train.py --network small
+python train.py --network small \
+                --verbose
