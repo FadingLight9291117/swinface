@@ -16,6 +16,7 @@ from utils.timer import Timer
 parser = argparse.ArgumentParser(description='Retinaface')
 parser.add_argument('-m', '--trained_model', default='./result/swin_epoch_195.pth',
                     type=str, help='Trained state_dict file path to open')
+parser.add_argument('--network', default='small', help='')
 parser.add_argument('--origin_size', default=True, type=str, help='Whether use origin image size to evaluate')
 parser.add_argument('--save_folder', default='./widerface_evaluate/widerface_txt/', type=str, help='Dir to save txt results')
 parser.add_argument('--cpu', action="store_true", default=False, help='Use cpu inference')
@@ -67,9 +68,12 @@ def load_model(model, pretrained_path, load_to_cpu):
 
 if __name__ == '__main__':
     torch.set_grad_enabled(False)
-
-    model_cfg = cfg_small.model
-    cfg = cfg_small.train
+    if args.network == 'tiny':
+        model_cfg = cfg_tiny.model
+        cfg = cfg_small.train
+    if args.network == 'small':
+        model_cfg = cfg_tiny.model
+        cfg = cfg_small.train
     # net and model
     net = SwinFace(phase='test',model_cfg=model_cfg)
     # net = load_model(net, args.trained_model, args.cpu)

@@ -117,7 +117,7 @@ if num_gpu > 1 and gpu_train:
 else:
     model = model.cuda()
 
-cudnn.benchmark = True
+cudnn.benchmark = False
 
 optimizer = optim.SGD(model.parameters(), lr=initial_lr,
                       momentum=momentum, weight_decay=weight_decay)

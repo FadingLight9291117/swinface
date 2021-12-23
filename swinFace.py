@@ -120,21 +120,21 @@ class SwinFace(nn.Module):
         return output
 
     @staticmethod
-    def _make_class_head(fpn_num=3, in_channels=64, anchor_num=2):
+    def _make_class_head(fpn_num=3, in_channels=64, anchor_num=4):
         class_head = nn.ModuleList()
         for i in range(fpn_num):
             class_head.append(ClassHead(in_channels, anchor_num))
         return class_head
 
     @staticmethod
-    def _make_bbox_head(fpn_num=3, in_channels=64, anchor_num=2):
+    def _make_bbox_head(fpn_num=3, in_channels=64, anchor_num=4):
         bbox_head = nn.ModuleList()
         for i in range(fpn_num):
             bbox_head.append(BboxHead(in_channels, anchor_num))
         return bbox_head
 
     @staticmethod
-    def _make_landmark_head(fpn_num=3, in_channels=64, anchor_num=2):
+    def _make_landmark_head(fpn_num=3, in_channels=64, anchor_num=4):
         land_mark_head = nn.ModuleList()
         for i in range(fpn_num):
             land_mark_head.append(LandmarkHead(in_channels, anchor_num))
